@@ -4,17 +4,17 @@
     "type": "split",
     "children": [
       {
-        "id": "d6a0017af622d56f",
+        "id": "1f69cbc24eca24a6",
         "type": "tabs",
         "children": [
           {
-            "id": "e3a6c0ccb00ff9c9",
+            "id": "cdc30e668e3df872",
             "type": "leaf",
             "state": {
-              "type": "empty",
+              "type": "graph",
               "state": {},
-              "icon": "lucide-file",
-              "title": "Новая вкладка"
+              "icon": "lucide-git-fork",
+              "title": "Граф"
             }
           }
         ]
@@ -192,8 +192,18 @@
       "omnisearch:Omnisearch": false
     }
   },
-  "active": "e3a6c0ccb00ff9c9",
+  "active": "cdc30e668e3df872",
   "lastOpenFiles": [
+    "DevOps/Docker/Docker — Тома (Volumes).md",
+    "DevOps/Docker/Docker — Сеть.md",
+    "DevOps/Docker/Docker — Основы.md",
+    "DevOps/Docker/Docker — Образы.md",
+    "DevOps/Docker/Docker — Контейнеры.md",
+    "DevOps/Docker/Docker — Compose.md",
+    "DevOps/Docker/Docker — Dockerfile.md",
+    "DevOps/Docker/Docker MOC.md",
+    "Excalidraw/Drawing 2026-06-24 21.05.12.excalidraw.md",
+    "Excalidraw",
     "создайте ссылку.md",
     "DevOps/Git",
     "Добро пожаловать.md",
