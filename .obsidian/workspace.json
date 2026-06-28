@@ -11,10 +11,14 @@
             "id": "cdc30e668e3df872",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Граф"
+              "type": "markdown",
+              "state": {
+                "file": "DevOps/Docker/Docker MOC.md",
+                "mode": "preview",
+                "source": true
+              },
+              "icon": "lucide-file",
+              "title": "Docker MOC"
             }
           }
         ]
@@ -167,6 +171,16 @@
               "icon": "git-pull-request",
               "title": "Source Control"
             }
+          },
+          {
+            "id": "1ba3206212d1059e",
+            "type": "leaf",
+            "state": {
+              "type": "advanced-tables-toolbar",
+              "state": {},
+              "icon": "spreadsheet",
+              "title": "Advanced Tables"
+            }
           }
         ],
         "currentTab": 5
@@ -195,13 +209,14 @@
   "active": "cdc30e668e3df872",
   "lastOpenFiles": [
     "DevOps/Docker/Docker — Тома (Volumes).md",
+    "DevOps/Docker/Docker MOC.md",
     "DevOps/Docker/Docker — Сеть.md",
+    "Untitled Kanban.md",
     "DevOps/Docker/Docker — Основы.md",
-    "DevOps/Docker/Docker — Образы.md",
     "DevOps/Docker/Docker — Контейнеры.md",
+    "DevOps/Docker/Docker — Образы.md",
     "DevOps/Docker/Docker — Compose.md",
     "DevOps/Docker/Docker — Dockerfile.md",
-    "DevOps/Docker/Docker MOC.md",
     "Excalidraw/Drawing 2026-06-24 21.05.12.excalidraw.md",
     "Excalidraw",
     "создайте ссылку.md",
