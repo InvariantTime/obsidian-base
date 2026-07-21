@@ -21,7 +21,7 @@ aliases:
 
 ## Что такое Dockerfile?
 
-**Dockerfile** — текстовый файл с инструкциями для сборки Docker-образа. Каждая инструкция создаёт новый **слой (layer)** в образе.
+**Dockerfile** — текстовый файл с инструкциями для сборки Docker-образа. 
 
 ```bash
 docker build -t myapp:1.0 .        # сборка образа из Dockerfile в текущей папке
@@ -75,7 +75,7 @@ ADD https://example.com/file.txt /tmp/  # скачает
 ### `RUN` — выполнение команд при сборке
 
 ```dockerfile
-RUN apt-get update && apt-get install -y     curl     git     && rm -rf /var/lib/apt/lists/*    # чистим кэш в том же слое!
+RUN apt-get update && apt-get install -y    curl     git     && rm -rf /var/lib/apt/lists/*    # чистим кэш в том же слое!
 
 RUN npm ci --only=production
 ```
@@ -141,6 +141,8 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 USER appuser        # никогда не запускай контейнер от root!
 ```
 
+>[!info]
+>Все инструкции до `USER` будут запускаться от текущего пользователя (по умолчанию root), после `USER` все инструкции запускаются от указанного пользователя
 ---
 
 ### `CMD` и `ENTRYPOINT`

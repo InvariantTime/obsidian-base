@@ -31,8 +31,14 @@ docker compose up -d     # поднять всё приложение
 docker compose down      # остановить и удалить
 ```
 
----
-
+>[!info]
+>Docker Compose позволяет описать всё приложение как код.
+>Вместо:
+`docker run`
+`docker network create`
+`docker volume create`
+мы описываем приложение в одном `compose.yaml` и запускаем его одной командой:
+`docker compose up`
 ## Структура docker-compose.yml
 
 ```yaml
@@ -51,7 +57,8 @@ networks:                   # сети
   backend:
 ```
 
----
+>[!info]  
+>Поле `version` сохранено для обратной совместимости, но современный Docker Compose автоматически использует актуальную версию Compose Specification.
 
 ## Полный пример: веб-приложение
 
@@ -265,6 +272,8 @@ services:
     command: npm run dev
 ```
 
+>[!info]
+>Переопределение позволяет управлять различными версиями приложения, например разработкой, тестированием и production
 ---
 
 ## depends_on и порядок запуска
@@ -288,6 +297,12 @@ services:
         condition: service_healthy
 ```
 
+> [!warning]
+> `depends_on` управляет только порядком запуска сервисов.
+>
+> Он **не гарантирует**, что приложение внутри контейнера уже готово принимать соединения.
+>
+> Для этого используется `healthcheck` и `condition: service_healthy`.
 ---
 
 ## Profiles — группы сервисов

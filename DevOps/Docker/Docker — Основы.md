@@ -44,29 +44,7 @@ aliases:
 ---
 
 ## Архитектура Docker
-
-```
-┌──────────────────────────────────────────────┐
-│               Docker Client                  │
-│   docker build | run | pull | push | ps ...  │
-└─────────────────────┬────────────────────────┘
-                      │ REST API (Unix socket / TCP)
-┌─────────────────────▼────────────────────────┐
-│             Docker Daemon (dockerd)           │
-│                                              │
-│  ┌───────────┐  ┌────────────┐  ┌─────────┐ │
-│  │  Images   │  │ Containers │  │ Volumes │ │
-│  └───────────┘  └────────────┘  └─────────┘ │
-│              ┌──────────────┐               │
-│              │  containerd  │ ← OCI Runtime  │
-│              └──────────────┘               │
-└─────────────────────┬────────────────────────┘
-                      │
-┌─────────────────────▼────────────────────────┐
-│              Docker Registry                 │
-│      Docker Hub | GHCR | ECR | private       │
-└──────────────────────────────────────────────┘
-```
+![[excalidraw-docker-base-architecture]]
 
 ### Компоненты
 
@@ -74,7 +52,7 @@ aliases:
 |-----------|------|
 | **Docker Client** | CLI (`docker`) — отправляет команды демону |
 | **Docker Daemon** (`dockerd`) | Основной процесс, управляет объектами Docker |
-| **containerd** | Low-level runtime — запускает и останавливает контейнеры |
+| **containerd** | Менеджер контейнеров. Управляет жизненным циклом контейнеров и вызывает OCI Runtime. |
 | **runc** | OCI-совместимый runtime — непосредственно создаёт процессы |
 | **Docker Registry** | Хранилище образов |
 
@@ -125,44 +103,7 @@ docker run hello-world
 
 ## Жизненный цикл контейнера
 
-```
-      docker pull / docker build
-              │
-         ┌───▼────┐
-         │ IMAGE  │
-         └───┬────┘
-             │ docker create / docker run
-        ┌────▼─────┐
-        │ CREATED  │
-        └────┬─────┘
-             │ docker start
-   ┌─────────▼──────────┐    docker pause    ┌──────────┐
-   │     RUNNING        │ ─────────────────► │  PAUSED  │
-   └─────────┬──────────┘ ◄───────────────── └──────────┘
-             │         docker unpause
-             │ docker stop (SIGTERM → SIGKILL)
-             │ docker kill (SIGKILL)
-        ┌────▼─────┐
-        │ STOPPED  │ ◄──── docker stop (снова)
-        └────┬─────┘
-             │ docker rm
-        ┌────▼─────┐
-        │ DELETED  │
-        └──────────┘
-```
-
----
-
-## Изоляция: как работают контейнеры
-
-Docker использует механизмы Linux-ядра:
-
-| Механизм | Что изолирует |
-|----------|--------------|
-| **Namespaces** | PID, сеть, файловая система, пользователи, IPC, UTS |
-| **Cgroups** | CPU, память, I/O — ограничение ресурсов |
-| **Union FS** | Наслоение read-only + writable слоёв образа |
-| **Seccomp** | Ограничение системных вызовов |
+![[excalidraw-docker-base-lifetime]]
 
 ---
 

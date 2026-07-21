@@ -22,6 +22,8 @@ aliases:
 
 ## docker run — запуск контейнера
 
+docker run автоматически делает pull из docker hub при отсутствии образа в локальном хранилище. Далее создаётся и запускается контейнер.
+
 ```bash
 docker run [OPTIONS] IMAGE [COMMAND] [ARGS]
 ```
@@ -86,6 +88,7 @@ docker run --privileged myapp                  # расширенные прав
 docker ps                    # запущенные контейнеры
 docker ps -a                 # все (включая остановленные)
 docker ps -q                 # только ID
+docker ps -s                 # показать размер
 docker ps --filter "status=running"
 docker ps --filter "name=nginx"
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
@@ -99,7 +102,7 @@ docker kill -s SIGINT my-nginx  # произвольный сигнал
 docker restart my-nginx      # stop + start
 
 # Пауза
-docker pause my-nginx        # заморозить (cgroup freezer)
+docker pause my-nginx        # заморозить (останавливает все процессы, но не удаляет их)
 docker unpause my-nginx      # разморозить
 
 # Удаление
@@ -121,6 +124,9 @@ docker exec -u root my-nginx whoami    # от другого пользоват�
 docker exec -e VAR=value my-nginx env  # с переменной окружения
 docker exec -w /tmp my-nginx pwd       # в другой рабочей директории
 ```
+
+>[!info]
+>`docker exec` запускает новый процесс внутри контейнера
 
 ---
 
@@ -164,6 +170,15 @@ docker port my-nginx
 docker port my-nginx 80
 ```
 
+> [!info]
+> `docker inspect` возвращает JSON с полной конфигурацией контейнера:
+>
+> - сеть
+> - тома
+> - переменные окружения
+> - ресурсы
+> - точки монтирования
+> - статус
 ---
 
 ## Копирование файлов
@@ -201,12 +216,14 @@ docker commit -m "added config" -a "author" my-nginx custom:latest
 
 ## Restart Policies
 
-| Политика | Поведение |
-|----------|-----------|
-| `no` | Не перезапускать (по умолчанию) |
-| `on-failure[:N]` | При ненулевом exit code, макс N попыток |
-| `always` | Всегда, включая после `docker restart` daemon |
-| `unless-stopped` | Всегда, кроме явной остановки пользователем |
+`docker run --restart unless-stopped`
+
+| Политика         | Поведение                                     |
+| ---------------- | --------------------------------------------- |
+| `no`             | Не перезапускать (по умолчанию)               |
+| `on-failure[:N]` | При ненулевом exit code, макс N попыток       |
+| `always`         | Всегда, включая после `docker restart` daemon |
+| `unless-stopped` | Всегда, кроме явной остановки пользователем   |
 
 ---
 
