@@ -83,27 +83,28 @@ aliases:
 # Посмотреть OCI config.json для запущенного контейнера
 docker inspect myapp | jq '.[0]'
 
-# Image manifest через API registry
-curl -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-  https://registry-1.docker.io/v2/library/nginx/manifests/latest
+# Manifest / OCI index без ручной работы с auth registry
+docker buildx imagetools inspect nginx:latest --raw | jq .
 ```
 
 ---
 
 ## Linux Namespaces
 
-Каждый контейнер получает **изолированный набор namespaces**:
+Docker использует несколько Linux namespaces. Но не все из них обязательно
+создаются для каждого контейнера: набор зависит от режима сети, userns/rootless,
+версии Engine и параметров запуска.
 
-| Namespace | Изолирует | Флаг | Системный вызов |
-|-----------|----------|------|----------------|
-| **PID** | Дерево процессов | `CLONE_NEWPID` | `getpid()` → видит своё |
-| **NET** | Сетевой стек | `CLONE_NEWNET` | eth0, lo, routing table |
-| **MNT** | Точки монтирования | `CLONE_NEWNS` | `/proc/mounts` |
-| **UTS** | Hostname, domainname | `CLONE_NEWUTS` | `hostname` внутри ≠ снаружи |
-| **IPC** | SysV IPC, POSIX MQ | `CLONE_NEWIPC` | очереди сообщений |
-| **USER** | UID/GID маппинг | `CLONE_NEWUSER` | root внутри → UID 100000 снаружи |
-| **CGROUP** | Корень иерархии cgroup | `CLONE_NEWCGROUP` | с Linux 4.6 |
-| **TIME** | Часы (CLOCK_*) | `CLONE_NEWTIME` | с Linux 5.6 |
+| Namespace | Изолирует | Флаг | Обычно |
+|-----------|----------|------|--------|
+| **PID** | Дерево процессов | `CLONE_NEWPID` | отдельный |
+| **NET** | Сетевой стек | `CLONE_NEWNET` | отдельный, кроме `--network host` |
+| **MNT** | Точки монтирования | `CLONE_NEWNS` | отдельный |
+| **UTS** | Hostname, domainname | `CLONE_NEWUTS` | отдельный |
+| **IPC** | SysV IPC, POSIX MQ | `CLONE_NEWIPC` | отдельный |
+| **USER** | UID/GID mapping | `CLONE_NEWUSER` | при rootless/userns-remap |
+| **CGROUP** | Видимую иерархию cgroup | `CLONE_NEWCGROUP` | зависит от конфигурации |
+| **TIME** | Некоторые системные часы | `CLONE_NEWTIME` | обычно не используется Docker по умолчанию |
 
 ```bash
 # Посмотреть namespaces контейнера
@@ -135,8 +136,8 @@ sudo nsenter --target $PID --net -- ss -tlnp
 | Иерархия | Несколько деревьев (по подсистеме) | Единое дерево |
 | Путь | `/sys/fs/cgroup/memory/...` | `/sys/fs/cgroup/...` |
 | Контроль CPU | `cpu` + `cpuacct` | `cpu` (объединены) |
-| Поддержка | Везде | Linux ≥ 4.5, systemd ≥ 244 |
-| Rootless Docker | Ограничено | Полная поддержка |
+| Поддержка | Legacy-системы | Стандарт для современных дистрибутивов |
+| Rootless Docker | Ресурсные лимиты сильно ограничены | Лимиты доступны при корректной настройке systemd/controllers |
 
 ```bash
 # Определить версию cgroups на хосте
@@ -170,19 +171,25 @@ docker inspect myapp | jq '.[0].HostConfig | {
 
 ---
 
-## Union Filesystem (overlay2)
+## Слоистая файловая система (OverlayFS)
 
-**overlay2** — драйвер ФС по умолчанию. Реализует слоистую структуру образов.
+`overlay2` — распространённый storage driver классического Docker image store.
+В свежих установках Docker Engine 29 по умолчанию используется containerd image
+store, который на Linux также обычно опирается на OverlayFS через snapshotter.
+Выбранный backend можно увидеть в `docker info`.
 
-```
-/var/lib/docker/overlay2/<layer-id>/
-├── diff/        ← что изменилось в этом слое
-├── link         ← короткий id (симлинк)
-├── lower        ← список нижележащих слоёв
-├── merged/      ← смонтированный результат (контейнер видит это)
-├── upper/       ← записываемый слой контейнера (copy-on-write)
-└── work/        ← служебная директория overlayfs
-```
+Для запущенного контейнера OverlayFS объединяет несколько каталогов:
+
+| Каталог | Назначение |
+|---|---|
+| `lowerdir` | read-only слои образа |
+| `upperdir` | изменения writable layer контейнера |
+| `workdir` | служебный каталог OverlayFS |
+| `merged` | объединённое представление, которое видит контейнер |
+
+Конкретная структура под `/var/lib/docker/overlay2` — внутренняя деталь
+реализации и может отличаться при другом storage driver или containerd image store.
+Не изменяй эти файлы вручную.
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -278,18 +285,22 @@ bridge link
 ## docker.sock — поверхность атаки
 
 ```bash
-# /var/run/docker.sock — это REST API без аутентификации
-# Монтирование в контейнер = root на хост-машине
+# /var/run/docker.sock — локальный Engine API; доступ контролируется правами socket
+# Доступ к rootful socket обычно эквивалентен root-доступу на хосте
 
 # Опасно:
 docker run -v /var/run/docker.sock:/var/run/docker.sock alpine
 
 # Изнутри такого контейнера:
 curl --unix-socket /var/run/docker.sock http://localhost/containers/json
-# → полный доступ ко всем контейнерам, созданию новых с privileged флагом
-
-# Безопасная альтернатива: rootless Docker или Podman
+# → полный контроль над rootful Docker daemon
 ```
+
+> [!danger]
+> Rootless Docker уменьшает последствия компрометации daemon, но публикация даже
+> rootless socket внутри недоверенного контейнера всё равно отдаёт ему полный
+> контроль над ресурсами этого daemon. Предпочитай узкий API-прокси с allowlist
+> операций или вообще не предоставляй socket.
 
 ---
 

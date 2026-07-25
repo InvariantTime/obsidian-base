@@ -37,7 +37,7 @@ docker stats --format \
 | Поле | Что означает | На что смотреть |
 |------|-------------|----------------|
 | `CPU %` | % от одного CPU-ядра (>100% = несколько ядер) | Стабильно высокий → утечка CPU |
-| `MEM USAGE` | Реальное потребление RAM | Постоянный рост → утечка памяти |
+| `MEM USAGE` | Память по данным cgroup (отображение cache зависит от ОС) | Постоянный рост → повод исследовать |
 | `MEM LIMIT` | Установленный лимит (`--memory`) | Близко к лимиту → OOM-риск |
 | `NET I/O` | Суммарный трафик с запуска | Неожиданный всплеск → проблема |
 | `BLOCK I/O` | Суммарный disk I/O с запуска | Высокий → I/O bottleneck |
@@ -75,8 +75,11 @@ docker logs myapp -f --tail 100 --timestamps
 
 # Лог-драйвер контейнера
 docker inspect myapp | jq '.[0].HostConfig.LogConfig'
+```
 
-# Изменить драйвер глобально (/etc/docker/daemon.json)
+`/etc/docker/daemon.json`:
+
+```json
 {
   "log-driver": "json-file",
   "log-opts": {
@@ -98,7 +101,10 @@ docker inspect myapp | jq '.[0].HostConfig.LogConfig'
 | `local` | Локальный, сжатый | Лучше json-file по производительности |
 
 > [!warning]
-> При `log-driver != json-file` команда `docker logs` может не работать!
+> Для локальных логов Docker рекомендует драйвер `local`: он эффективнее и
+> включает rotation по умолчанию. С remote-драйверами `docker logs` обычно
+> работает через dual logging cache; если cache отключён, чтение может быть
+> недоступно. Изменение daemon config действует только на **новые** контейнеры.
 
 ---
 
@@ -166,12 +172,11 @@ PID=$(docker inspect --format '{{.State.Pid}}' myapp)
 CGPATH=$(cat /proc/$PID/cgroup | grep '0::' | cut -d: -f3)
 
 cat /sys/fs/cgroup${CGPATH}/memory.current        # текущее использование
-cat /sys/fs/cgroup${CGPATH}/memory.peak           # пик с запуска
+cat /sys/fs/cgroup${CGPATH}/memory.peak           # пик; доступно не на всех ядрах
 cat /sys/fs/cgroup${CGPATH}/memory.stat           # детальная статистика
 cat /sys/fs/cgroup${CGPATH}/memory.events         # oom events count
 
 # Какие процессы потребляют память внутри контейнера
-docker exec myapp cat /proc/meminfo
 docker exec myapp ps aux --sort=-%mem | head -20
 
 # smaps — детальное распределение памяти процесса (PID 1)
@@ -189,6 +194,12 @@ docker cp myapp:/tmp/dump.dmp ./
 dotnet-dump analyze dump.dmp
 ```
 
+> [!note]
+> `dotnet-counters`, `dotnet-dump` и `dotnet-trace` обычно отсутствуют в
+> production runtime-образе. Подготовь отдельный debug target, используй
+> `dotnet-monitor` или подключай диагностический контейнер; не устанавливай SDK
+> и отладчики в финальный production-образ без необходимости.
+
 ---
 
 ## CPU: профилирование
@@ -201,11 +212,8 @@ CGPATH=$(cat /proc/$PID/cgroup | grep '0::' | cut -d: -f3)
 watch -n1 cat /sys/fs/cgroup${CGPATH}/cpu.stat
 # usage_usec — накопленное CPU-время в мкс
 
-# perf inside container (нужен --privileged или SYS_ADMIN)
-docker run --rm -it --privileged --pid host \
-  --volume /usr/src:/usr/src:ro \
-  brendangregg/perf-tools \
-  perf top -p $PID
+# perf на хосте для процесса контейнера
+sudo perf top -p "$PID"
 
 # .NET flamegraph
 docker exec myapp dotnet-trace collect -p 1 \
@@ -223,8 +231,9 @@ docker cp myapp:/tmp/trace.nettrace ./
 # Block I/O cgroup stats
 cat /sys/fs/cgroup${CGPATH}/io.stat
 
-# iotop внутри контейнера (через netshoot)
-docker run --rm -it --pid container:myapp nicolaka/netshoot iotop -p $(docker inspect --format '{{.State.Pid}}' myapp)
+# iotop с host PID namespace (нужны повышенные права)
+PID=$(docker inspect --format '{{.State.Pid}}' myapp)
+docker run --rm -it --privileged --pid host nicolaka/netshoot iotop -p "$PID"
 
 # Статистика I/O через docker stats
 docker stats myapp --format "{{.BlockIO}}"
@@ -309,8 +318,9 @@ RUN npm ci
 
 FROM base AS development
 RUN npm install --save-dev @types/node ts-node nodemon
+COPY . .
 # Включить remote debugging
-CMD ["node", "--inspect=0.0.0.0:9229", "src/index.ts"]
+CMD ["node", "--inspect=0.0.0.0:9229", "-r", "ts-node/register", "src/index.ts"]
 
 FROM base AS production
 COPY . .
@@ -321,8 +331,8 @@ CMD ["node", "dist/index.js"]
 
 ```bash
 # Запуск dev-версии с отладчиком
+docker build --target development -t myapp:dev .
 docker run -p 3000:3000 -p 9229:9229 \
-  --target development \
   myapp:dev
 # → подключить Chrome DevTools / VS Code debugger на порт 9229
 ```
@@ -354,6 +364,11 @@ docker exec myapp strace -p 1 -c -f 2>&1 | head -30
 # Бинарный поиск — какой слой образа добавил большой файл
 docker history --no-trunc myapp:latest
 ```
+
+> [!note]
+> Команды `ps`, `ss`, `strace`, `curl` и подобные могут отсутствовать в
+> минимальном образе. Это не ошибка Docker — используй debug target, `nsenter`
+> или отдельный диагностический контейнер.
 
 ---
 

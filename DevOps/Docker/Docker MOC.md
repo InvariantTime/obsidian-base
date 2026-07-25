@@ -26,7 +26,7 @@ TABLE WITHOUT ID
   status AS "Статус"
 FROM #docker
 WHERE file.name != this.file.name
-SORT difficulty ASC, file.name ASC
+SORT choice(difficulty = "начинающий", 1, choice(difficulty = "средний", 2, 3)) ASC, file.name ASC
 ```
 
 ---
@@ -114,7 +114,7 @@ TABLE WITHOUT ID
   dateformat(date(created), "dd.MM.yyyy") AS "Добавлена"
 FROM #docker
 WHERE file.name != this.file.name
-SORT difficulty ASC, file.name ASC
+SORT choice(difficulty = "начинающий", 1, choice(difficulty = "средний", 2, 3)) ASC, file.name ASC
 ```
 
 ---
@@ -145,7 +145,7 @@ SORT difficulty ASC, file.name ASC
 ## 🔖 Быстрые ссылки
 
 - [Docker Docs](https://docs.docker.com)
-- [Dockerfile Reference](https://docs.docker.com/engine/reference/builder/)
+- [Dockerfile Reference](https://docs.docker.com/reference/dockerfile/)
 - [Compose Spec](https://docs.docker.com/compose/compose-file/)
 - [BuildKit Docs](https://docs.docker.com/build/buildkit/)
 - [OCI Specs](https://opencontainers.org)

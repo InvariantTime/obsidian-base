@@ -23,15 +23,17 @@ aliases:
 
 ## Структура образа (OCI Image Spec)
 
-```
+```text
 Image
-├── manifest.json          ← список слоёв + config
-├── config.json            ← метаданные: Cmd, Env, Labels, History...
-└── layers/
-    ├── sha256:abc.tar.gz  ← слой 1 (базовый образ)
-    ├── sha256:def.tar.gz  ← слой 2 (RUN apt install)
-    └── sha256:ghi.tar.gz  ← слой 3 (COPY app/)
+├── manifest / index       ← config + упорядоченный список слоёв
+├── config blob            ← Cmd, Env, Labels, History, diff IDs...
+└── layer blobs            ← tar-архивы изменений файловой системы
 ```
+
+> [!note]
+> Это логическая схема OCI-образа. Точные имена каталогов после `docker save`
+> зависят от формата экспорта и image store, поэтому ориентируйся на
+> `manifest.json`/`index.json` и digest, а не на условный каталог `layers/`.
 
 ```bash
 # Посмотреть manifest образа
@@ -55,10 +57,6 @@ docker history myapp:latest
 
 # Полная (без обрезки)
 docker history --no-trunc myapp:latest
-
-# Только большие слои (> 1 MB)
-docker history --no-trunc --format "{{.Size}}\t{{.CreatedBy}}" myapp:latest \
-  | sort -rh | head -20
 
 # Посмотреть размер каждого слоя
 docker history --format "table {{.Size}}\t{{.CreatedBy}}" myapp:latest
@@ -85,8 +83,8 @@ dive myapp:latest
 
 # CI-режим (проверить эффективность)
 dive --ci myapp:latest
-# → Провалится если есть файлы, которые были добавлены и удалены в разных слоях
-#   (тратят место зря)
+# → Проверит эффективность по правилам .dive-ci и вернёт ненулевой exit code,
+#   если нарушены заданные пороги
 ```
 
 **Что искать в dive:**
@@ -137,8 +135,8 @@ docker scout cves --only-severity critical,high myapp:latest
 # Рекомендации по базовому образу
 docker scout recommendations myapp:latest
 
-# Сравнение двух версий
-docker scout compare myapp:1.0 myapp:2.0
+# Сравнение новой версии с базовой
+docker scout compare myapp:2.0 --to myapp:1.0
 
 # Quick overview
 docker scout quickview myapp:latest
@@ -152,14 +150,13 @@ docker scout cves --exit-code --only-severity critical myapp:latest
 ## SBOM — Software Bill of Materials
 
 ```bash
-# Сгенерировать SBOM
-docker sbom myapp:latest
-docker sbom --format spdx-json myapp:latest > sbom.spdx.json
-docker sbom --format cyclonedx-json myapp:latest > sbom.cyclonedx.json
+# Посмотреть SBOM через Docker Scout
+docker scout sbom myapp:latest
 
-# Syft (более гибкий инструмент)
+# Syft: сохранить SBOM в стандартном формате
 syft myapp:latest
 syft myapp:latest -o spdx-json > sbom.json
+syft myapp:latest -o cyclonedx-json > sbom.cyclonedx.json
 
 # Grype — сканировать SBOM на уязвимости
 syft myapp:latest -o json | grype
@@ -184,7 +181,7 @@ docker buildx build \
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 COPY . .
 
 FROM gcr.io/distroless/nodejs20-debian12 AS final
@@ -201,11 +198,11 @@ RUN dotnet restore
 COPY . .
 RUN dotnet publish -c Release -o /app/publish
 
-FROM gcr.io/distroless/dotnet8 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy-chiseled AS final
 WORKDIR /app
 COPY --from=build /app/publish .
-USER 1001
-ENTRYPOINT ["MyApp"]
+USER app
+ENTRYPOINT ["dotnet", "MyApp.dll"]
 
 # ── Go (scratch) ───────────────────────────────────────────────
 FROM golang:1.22 AS build
@@ -222,14 +219,16 @@ USER 65532:65532
 ENTRYPOINT ["/server"]
 ```
 
-| Образ | Размер | Shell | Пакеты |
-|-------|--------|-------|--------|
-| `ubuntu:22.04` | ~77 MB | bash | apt |
-| `debian:slim` | ~75 MB | bash | apt |
-| `alpine:3.19` | ~7 MB | sh | apk |
-| `distroless/base` | ~20 MB | ❌ | ❌ |
-| `distroless/nodejs20` | ~90 MB | ❌ | ❌ |
-| `scratch` | 0 MB | ❌ | ❌ |
+| Образ | Shell | Пакетный менеджер | Важная особенность |
+|-------|-------|-------------------|--------------------|
+| Ubuntu / Debian | ✅ | `apt` | Удобная совместимость и диагностика |
+| Alpine | `sh` | `apk` | Очень мал, но использует `musl` |
+| .NET chiseled / distroless | ❌ | ❌ | Меньше поверхность атаки, сложнее отладка |
+| `scratch` | ❌ | ❌ | Полностью пустая база; приложение приносит всё нужное само |
+
+> [!note]
+> Размеры тегов меняются, а Docker CLI показывает несжатый локальный размер.
+> Сравнивай конкретные digest одной архитектуры, а не числа из статической таблицы.
 
 ---
 
@@ -255,25 +254,27 @@ docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" \
 # Реальный размер с учётом shared layers
 docker system df -v | grep myapp
 
-# Сжатый размер (как в registry)
-docker manifest inspect --verbose myapp:latest \
-  | jq '.Descriptor.size' | numfmt --to=iec
 ```
+
+> [!note]
+> Локальный размер и объём скачивания из registry — разные величины: слои в
+> registry сжаты и могут уже находиться в локальном cache. Поле размера descriptor
+> самого manifest — это не сумма размеров его слоёв.
 
 ---
 
-## Политики подписи образов (Content Trust)
+## Подпись и проверка образов
 
 ```bash
-# Docker Content Trust (Notary v1)
-export DOCKER_CONTENT_TRUST=1
-docker pull myapp:latest    # проверит подпись
-docker push myapp:latest    # потребует подписать
-
-# Cosign (Sigstore — современный подход)
+# Cosign (Sigstore)
 cosign sign --key cosign.key myregistry.com/myapp:latest
 cosign verify --key cosign.pub myregistry.com/myapp:latest
 ```
+
+> [!danger] Docker Content Trust / Notary v1
+> DCT устарел, удалён из Docker CLI 29 и сервис Notary v1 выводится из
+> эксплуатации. Для новых систем используй Sigstore/Cosign, Notation и проверку
+> attestations политиками платформы.
 
 ---
 
@@ -282,7 +283,7 @@ cosign verify --key cosign.pub myregistry.com/myapp:latest
 ```yaml
 # .github/workflows/security.yml
 - name: Trivy vulnerability scanner
-  uses: aquasecurity/trivy-action@master
+  uses: aquasecurity/trivy-action@v0.36.0
   with:
     image-ref: myapp:latest
     format: sarif
@@ -291,7 +292,7 @@ cosign verify --key cosign.pub myregistry.com/myapp:latest
     exit-code: 1
 
 - name: Upload to GitHub Security
-  uses: github/codeql-action/upload-sarif@v2
+  uses: github/codeql-action/upload-sarif@v3
   with:
     sarif_file: trivy-results.sarif
 ```

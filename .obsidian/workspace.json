@@ -8,29 +8,17 @@
         "type": "tabs",
         "children": [
           {
-            "id": "6b2c93d5ecd9f614",
+            "id": "0e82647c138cd9b4",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "DevOps/Docker/Docker — Секреты.md",
-                "mode": "source",
+                "file": "DevOps/Docker/Docker — Dockerfile.md",
+                "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Docker — Секреты"
-            }
-          },
-          {
-            "id": "0e82647c138cd9b4",
-            "type": "leaf",
-            "state": {
-              "type": "excalidraw",
-              "state": {
-                "file": "Excalidraw/docker/excalidraw-docker-volume-base.md"
-              },
-              "icon": "excalidraw-icon",
-              "title": "excalidraw-docker-volume-base"
+              "title": "Docker — Dockerfile"
             }
           },
           {
@@ -230,26 +218,29 @@
       "omnisearch:Omnisearch": false
     }
   },
-  "active": "6b2c93d5ecd9f614",
+  "active": "0e82647c138cd9b4",
   "lastOpenFiles": [
-    "DevOps/Docker/Docker — Ресурсы и лимиты.md",
     "DevOps/Docker/Docker — Пользователи и права.md",
-    "DevOps/Docker/Docker — Анализ образов.md",
-    "DevOps/Docker/Docker — Dockerfile.md",
-    "DevOps/Docker/Docker — Compose.md",
-    "DevOps/Docker/Docker — Тома (Volumes).md",
-    "Excalidraw/docker/excalidraw-docker-volume-base.md",
-    "DevOps/Docker/Docker — Сеть.md",
-    "Excalidraw/docker/excalidraw-docker-network-base.md",
-    "Excalidraw/docker/excalidraw-docker-base-lifetime.md",
+    "DevOps/Docker/Docker — BuildKit и кэширование.md",
+    "DevOps/Docker/Docker — Секреты.md",
+    "DevOps/Docker/Docker — Контейнеры.md",
     "DevOps/Docker/Docker — Образы.md",
     "DevOps/Docker/Docker — Основы.md",
-    "Excalidraw/docker/excalidraw-docker-image-layers.md",
-    "DevOps/Docker/Docker — Контейнеры.md",
     "DevOps/Docker/Docker MOC.md",
-    "DevOps/Docker/Docker — Секреты.md",
+    "DevOps/Docker/Docker — Анализ образов.md",
+    "Excalidraw/docker/excalidraw-docker-volume-base.md",
+    "DevOps/Docker/Docker — Тома (Volumes).md",
+    "DevOps/Docker/Docker — Сеть.md",
+    "DevOps/Docker/Docker — Ресурсы и лимиты.md",
     "DevOps/Docker/Docker — Профилирование и диагностика.md",
+    "DevOps/Docker/Docker — Многоплатформенные образы.md",
     "DevOps/Docker/Docker — Внутреннее устройство.md",
+    "DevOps/Docker/Docker — Dockerfile.md",
+    "DevOps/Docker/Docker — Compose.md",
+    "DevOps/Docker",
+    "Excalidraw/docker/excalidraw-docker-network-base.md",
+    "Excalidraw/docker/excalidraw-docker-base-lifetime.md",
+    "Excalidraw/docker/excalidraw-docker-image-layers.md",
     "Excalidraw/docker/excalidraw-docker-base-architecture.md",
     "Excalidraw/docker",
     "Excalidraw",
@@ -263,7 +254,6 @@
     "DevOps/Linux",
     "DevOps/Nginx",
     "DevOps/Kubernetes",
-    "DevOps/Docker",
     "DevOps",
     "Frontend"
   ]

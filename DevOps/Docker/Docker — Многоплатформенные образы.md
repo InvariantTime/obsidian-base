@@ -49,7 +49,7 @@ docker buildx create --name multibuilder --driver docker-container --use
 docker buildx inspect --bootstrap   # загрузить поддерживаемые платформы
 
 # Сборка для одной платформы
-docker buildx build --platform linux/arm64 -t myapp:arm64 .
+docker buildx build --platform linux/arm64 -t myapp:arm64 --load .
 
 # Сборка для нескольких платформ одновременно + push в registry
 docker buildx build \
@@ -62,8 +62,11 @@ docker buildx build \
 docker buildx inspect multibuilder | grep Platforms
 ```
 
-> [!warning] Без `--push` нельзя загрузить multi-arch образ локально
-> `--load` работает только для одной платформы. Multi-arch образ должен сразу уходить в registry.
+> [!warning] Куда попал результат?
+> Buildx не обязан автоматически добавлять результат в локальный image store.
+> Используй `--push`, `--load` или явный `--output`. Классический Docker image
+> store загружает через `--load` только один вариант платформы; containerd image
+> store умеет хранить multi-platform image локально.
 
 ---
 
@@ -80,8 +83,13 @@ ls /proc/sys/fs/binfmt_misc/
 # qemu-aarch64, qemu-arm, qemu-riscv64 и т.д.
 ```
 
+> [!warning]
+> Команда с `--privileged` изменяет регистрацию `binfmt_misc` на хосте. Запускай
+> только доверенный образ и только на машине, которой управляешь; в CI лучше
+> использовать официальный setup action или нативные runners.
+
 > [!note] Эмуляция vs кросс-компиляция
-> - **QEMU эмуляция** — медленно (~10x), но работает для любого кода
+> - **QEMU эмуляция** — обычно заметно медленнее, особенно для компиляции и сжатия
 > - **Кросс-компиляция** — быстро, требует отдельной настройки компилятора
 
 ---
@@ -206,14 +214,14 @@ jobs:
 
       # Установить QEMU для кросс-платформенной эмуляции
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       # Создать buildx builder с multi-platform поддержкой
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -222,7 +230,7 @@ jobs:
       # Генерация тегов и labels
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
@@ -231,7 +239,7 @@ jobs:
             type=semver,pattern={{version}}
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -259,11 +267,12 @@ build-multiarch:
     - docker buildx inspect --bootstrap
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
-    - docker buildx build
-        --platform $PLATFORMS
-        --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-        --tag $CI_REGISTRY_IMAGE:latest
-        --push
+    - |
+      docker buildx build \
+        --platform "$PLATFORMS" \
+        --tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
+        --tag "$CI_REGISTRY_IMAGE:latest" \
+        --push \
         .
 ```
 
@@ -279,7 +288,8 @@ docker buildx build --platform linux/amd64,linux/arm64 --push .
 ```
 
 **Плюсы:** Просто настроить, один CI runner  
-**Минусы:** arm64 через эмуляцию может занять в 5-10 раз дольше
+**Минусы:** arm64 через эмуляцию может собираться значительно дольше; разница
+зависит от workload
 
 ### Стратегия 2: Нативные runners (быстрая)
 
@@ -293,7 +303,7 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-latest
           - platform: linux/arm64
-            runner: ubuntu-latest-arm64   # ARM runner
+            runner: ubuntu-24.04-arm      # GitHub-hosted ARM runner
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Build
@@ -312,7 +322,7 @@ jobs:
           docker buildx imagetools create \
             --tag ghcr.io/org/app:latest \
             ghcr.io/org/app:${{ github.sha }}-ubuntu-latest \
-            ghcr.io/org/app:${{ github.sha }}-ubuntu-latest-arm64
+            ghcr.io/org/app:${{ github.sha }}-ubuntu-24.04-arm
 ```
 
 ### Стратегия 3: Кросс-компиляция (идеально для Go/.NET)

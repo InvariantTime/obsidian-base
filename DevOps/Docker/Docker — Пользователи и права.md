@@ -47,7 +47,7 @@ FROM node:20-alpine
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 COPY . .
 
 # Создать группу и пользователя
@@ -75,15 +75,17 @@ RUN groupadd -r -g 1001 appgroup && \
 USER appuser:appgroup
 ```
 
->[!info]
->Также можно передавать права на файл новому владельцу с помощью `COPY
+> [!info]
+>Владельца копируемых файлов можно задать сразу:
 >```dockerfile
 >COPY --chown=appuser:appgroup . .
 >```
->Это работает даже быстрее, так как использует только один слой
+>Это не создаёт отдельный слой с рекурсивным `chown` и обычно ускоряет сборку.
 
->[!info]
->Стоит обратить внимание, что инструкции до `USER` будут выполняться от текущего пользователя (по умолчанию root). Все инструкции, что идут после `USER` выполняются от установленного пользователя.
+> [!info]
+>`USER` влияет на последующие `RUN`, а также задаёт пользователя для `CMD` и
+>`ENTRYPOINT`. `COPY` без `--chown` по умолчанию всё равно создаёт файлы с
+>владельцем UID/GID `0`.
 
 ---
 
@@ -111,7 +113,7 @@ capsh --decode=00000000a80425fb   # декодировать bitmap
 # Запуск с минимальными capabilities (нет ничего лишнего)
 docker run --cap-drop ALL --cap-add NET_BIND_SERVICE nginx
 
-# Опасно — полные capabilities (как root без ограничений)
+# Опасно — почти полностью снимает стандартные ограничения контейнера
 docker run --privileged myapp
 
 # Посмотреть дефолтные capability Docker
@@ -135,9 +137,11 @@ services:
 
 ## Seccomp — фильтр системных вызовов
 
-**Seccomp** (Secure Computing Mode) — профиль, определяющий, какие системные вызовы разрешены, запрещены или приводят к ошибке..
+**Seccomp** (Secure Computing Mode) — профиль, определяющий, какие системные
+вызовы разрешены, запрещены или приводят к ошибке.
 
-Docker по умолчанию блокирует ~44 опасных syscall (keyctl, ptrace, clone с определёнными флагами, etc.)
+Стандартный профиль Docker блокирует около 44 из 300+ системных вызовов. Точный
+набор меняется вместе с Docker, ядром и `libseccomp`.
 
 ```bash
 # Проверить профиль контейнера
@@ -150,22 +154,12 @@ docker run --security-opt seccomp=unconfined myapp
 docker run --security-opt seccomp=my-profile.json myapp
 ```
 
-```json
-// my-profile.json — минимальный кастомный seccomp профиль
-{
-  "defaultAction": "SCMP_ACT_ERRNO",
-  "architectures": ["SCMP_ARCH_X86_64"],
-  "syscalls": [
-    {
-      "names": ["read", "write", "open", "close", "stat", "fstat",
-                "mmap", "mprotect", "munmap", "brk", "exit_group",
-                "futex", "nanosleep", "clock_gettime", "epoll_wait",
-                "accept4", "recvfrom", "sendto", "connect", "socket"],
-      "action": "SCMP_ACT_ALLOW"
-    }
-  ]
-}
-```
+> [!warning]
+> Не составляй минимальный профиль простым перечислением «очевидных» syscall:
+> реальные runtime и libc используют значительно больше вызовов, а набор зависит
+> от архитектуры. Начинай со стандартного профиля Docker, фиксируй необходимые
+> исключения и тестируй приложение. Отключение seccomp допустимо только как
+> кратковременный диагностический шаг.
 
 ---
 
@@ -181,8 +175,8 @@ docker inspect myapp | jq '.[0].AppArmorProfile'
 # Отключить AppArmor
 docker run --security-opt apparmor=unconfined myapp
 
-# Посмотреть дефолтный профиль
-cat /etc/apparmor.d/docker-default
+# Посмотреть загруженные профили
+sudo aa-status | grep docker-default
 ```
 
 >[!info]
@@ -243,10 +237,11 @@ docker run hello-world
 
 # Путь хранилища: ~/.local/share/docker/
 
-# Ограничения:
-# - Порты < 1024 недоступны без дополнительной настройки
-# - overlay2 может не работать без fuse-overlayfs
-# - некоторые --network modes ограничены
+# Особенности:
+# - для портов < 1024 может потребоваться настройка
+#   net.ipv4.ip_unprivileged_port_start или RootlessKit
+# - сеть реализуется через RootlessKit и может иметь другую производительность
+# - host network, AppArmor и cgroup-лимиты имеют системные ограничения
 ```
 
 >[!success]
@@ -327,7 +322,7 @@ SORT file.name ASC
 > - [ ] `--cap-drop ALL --cap-add <только нужное>`
 > - [ ] `--read-only` + tmpfs для writable dirs
 > - [ ] `--security-opt no-new-privileges`
-> - [ ] Использовать минимальный базовый образ (distroless / alpine)
+> - [ ] Использовать минимальный совместимый базовый образ (slim / chiseled / distroless / Alpine)
 > - [ ] Регулярно сканировать образы (trivy, docker scout)
 > - [ ] Не монтировать `/var/run/docker.sock` без необходимости
 > - [ ] Включить `userns-remap` или rootless Docker

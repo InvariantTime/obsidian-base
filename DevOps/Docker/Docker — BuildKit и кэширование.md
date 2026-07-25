@@ -24,7 +24,8 @@ aliases:
 
 ## Что такое BuildKit?
 
-**BuildKit** — новый движок сборки Docker-образов, заменивший классический builder. Включён по умолчанию начиная с Docker 23.0.
+**BuildKit** — современный движок сборки Docker-образов, заменивший классический
+builder. В Docker Engine он используется по умолчанию начиная с версии 23.0.
 
 | | Классический builder | BuildKit |
 |-|---------------------|---------|
@@ -39,9 +40,6 @@ aliases:
 # Включить принудительно (если старый Docker)
 export DOCKER_BUILDKIT=1
 
-# Включить глобально — /etc/docker/daemon.json
-{ "features": { "buildkit": true } }
-
 # Проверить версию builder
 docker buildx version
 docker buildx ls
@@ -51,9 +49,12 @@ docker buildx ls
 
 ## Cache Mounts — главная фича BuildKit
 
-**Проблема:** каждый `RUN npm ci` скачивает пакеты заново, даже если `package.json` не изменился.
+**Проблема:** обычный layer cache полностью пропускает `RUN npm ci`, пока
+предыдущие инструкции не изменились. Но если слой инвалидирован, установка
+запускается заново и без отдельного package cache снова скачивает зависимости.
 
-**Решение:** `--mount=type=cache` — постоянная директория кэша **между сборками**, которая никогда не попадает в образ.
+**Решение:** `--mount=type=cache` — переиспользуемая директория кэша **между
+сборками**, содержимое которой не попадает в итоговый слой образа.
 
 ```dockerfile
 # ── Node.js ───────────────────────────────────────────────────
@@ -67,8 +68,7 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --prefer-offline
 
 COPY . .
-RUN --mount=type=cache,target=/root/.npm \
-    npm run build
+RUN npm run build
 ```
 
 ```dockerfile
@@ -115,9 +115,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 ```dockerfile
 # ── apt / apk ─────────────────────────────────────────────────
 FROM ubuntu:22.04
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt/lists \
-    apt-get update && apt-get install -y curl git
+RUN rm -f /etc/apt/apt.conf.d/docker-clean \
+    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' \
+       > /etc/apt/apt.conf.d/keep-cache
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends curl git
 ```
 
 > [!tip] Параметры cache mount
@@ -125,6 +129,9 @@ RUN --mount=type=cache,target=/var/cache/apt \
 > - `sharing=shared` (default) / `locked` / `private`
 > - `mode=0755` — права на директорию
 > - `uid`, `gid` — владелец
+>
+> Сборка не должна зависеть от наличия cache mount: builder может очистить кэш,
+> а параллельная сборка — изменить его содержимое.
 
 ---
 
@@ -136,9 +143,11 @@ RUN --mount=type=cache,target=/var/cache/apt \
 # syntax=docker/dockerfile:1
 FROM golang:1.22-alpine
 
-# Добавить private repo в known_hosts
-RUN --mount=type=ssh \
-    apk add --no-cache git openssh && \
+# Установить SSH-клиент и доверять конкретному ключу хоста
+RUN apk add --no-cache git openssh-client \
+    && mkdir -p -m 0700 /root/.ssh \
+    && ssh-keyscan github.com >> /root/.ssh/known_hosts \
+    && \
     git config --global url."git@github.com:".insteadOf "https://github.com/" && \
     go env -w GOPRIVATE="github.com/myorg/*"
 
@@ -151,6 +160,10 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/go-build \
     go build ./...
 ```
+
+> [!warning]
+> `ssh-keyscan` удобно для примера, но в CI безопаснее сверять полученный host key
+> с заранее закреплённым fingerprint, иначе возможна атака man-in-the-middle.
 
 ```bash
 # Сборка с forwarding SSH-агента
@@ -167,7 +180,9 @@ docker build --ssh mykey=~/.ssh/id_rsa .
 
 ## Bind Mount в RUN — без копирования
 
-Монтирование файлов только на время шага сборки (не создаёт новый слой):
+Монтирование исходных файлов только на время шага сборки: сами смонтированные
+файлы не копируются в слой, но изменения, которые команда запишет вне mount,
+по-прежнему войдут в результат `RUN`.
 
 ```dockerfile
 # Установка зависимостей без постоянного COPY package.json
@@ -188,25 +203,26 @@ RUN npm ci
 Секрет доступен только во время шага RUN, не попадает в слои:
 
 ```dockerfile
-# .netrc, токены, API-ключи для package-менеджеров
-RUN --mount=type=secret,id=npmtoken \
-    npm config set //registry.npmjs.org/:_authToken=$(cat /run/secrets/npmtoken) && \
+# Готовый .npmrc временно подменяет файл конфигурации
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     npm ci
 
-# NuGet с приватным feed
-RUN --mount=type=secret,id=nuget_token \
-    dotnet nuget add source \
-      "https://pkgs.example.com/nuget/v3/index.json" \
-      --name PrivateFeed \
-      --username CI \
-      --password "$(cat /run/secrets/nuget_token)" && \
+# NuGet.Config с credentials существует только во время restore
+RUN --mount=type=secret,id=nuget_config,target=/root/.nuget/NuGet/NuGet.Config,required=true \
     dotnet restore
 ```
 
 ```bash
-docker build --secret id=npmtoken,src=.npm_token .
-docker build --secret id=nuget_token,env=NUGET_TOKEN .  # из env-переменной
+docker build --secret id=npmrc,src="$HOME/.npmrc" .
+docker build --secret id=nuget_config,src=NuGet.Config .
 ```
+
+> [!danger]
+> Не выполняй `npm config set ...TOKEN...` или `dotnet nuget add source
+> --password ...` в обычной файловой системе шага: такие команды могут записать
+> секрет в конфигурационный файл, который попадёт в слой. Монтируй сам файл
+> конфигурации как secret или используй документированный способ передачи
+> credentials конкретного package manager.
 
 ---
 
@@ -223,7 +239,7 @@ docker buildx build \
 
 # Следующая сборка использует кэш из registry
 docker buildx build \
-  --cache-from myapp:latest \
+  --cache-from type=registry,ref=myapp:latest \
   --tag myapp:new-version \
   --push .
 ```
@@ -231,13 +247,18 @@ docker buildx build \
 ```yaml
 # GitHub Actions
 - name: Build and push
-  uses: docker/build-push-action@v5
+  uses: docker/build-push-action@v7
   with:
     cache-from: type=gha
     cache-to: type=gha,mode=max
     push: true
     tags: ghcr.io/org/app:latest
 ```
+
+> [!note]
+> `cache-to: type=gha` сохраняет layer cache BuildKit, но cache mounts из
+> `RUN --mount=type=cache` автоматически в GitHub Actions cache не экспортирует.
+> Для них нужен отдельный механизм или runner с постоянным builder storage.
 
 ---
 
@@ -265,10 +286,16 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
 # 1. Только project файлы → restore кэшируется
-COPY **/*.csproj ./
-COPY *.sln ./
+# В multi-project solution сохраняй структуру каталогов.
+# Универсального COPY с сохранением путей нет — перечисли project-файлы явно
+# или генерируй минимальный restore-контекст отдельным инструментом.
+COPY MyApp.sln ./
+# Следующая строка нужна, только если эти файлы есть в solution
+COPY Directory.Build.props Directory.Packages.props ./
+COPY src/MyApp/MyApp.csproj src/MyApp/
+COPY tests/MyApp.Tests/MyApp.Tests.csproj tests/MyApp.Tests/
 RUN --mount=type=cache,target=/root/.nuget/packages \
-    dotnet restore
+    dotnet restore MyApp.sln
 
 # 2. Исходники (меняются часто)
 COPY . .
@@ -300,6 +327,7 @@ ENTRYPOINT ["dotnet", "MyApp.dll"]
 
 # Heredoc для RUN
 RUN <<EOF
+  set -eu
   apt-get update
   apt-get install -y curl git
   rm -rf /var/lib/apt/lists/*

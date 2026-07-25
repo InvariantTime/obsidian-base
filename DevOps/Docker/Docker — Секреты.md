@@ -54,7 +54,7 @@ docker history myapp
 | **Сборка образа** | ARG/RUN с секретами → в слоях | BuildKit `--secret` |
 | **Runtime** | ENV видно в inspect | Docker Secrets / файлы |
 | **Хранение** | .env файлы в репо | External secret managers |
-| **Передача** | Секрет в command args | Env files / volumes |
+| **Передача** | Секрет в command args | Secret/file mount или API внешнего хранилища |
 
 ---
 
@@ -69,12 +69,9 @@ WORKDIR /app
 
 COPY package*.json ./
 
-# Секрет монтируется как файл /run/secrets/<id>
-# — не попадает в слой образа!
-RUN --mount=type=secret,id=npmrc \
-    cp /run/secrets/npmrc .npmrc && \
-    npm ci && \
-    rm .npmrc
+# Secret временно монтируется прямо в ожидаемый путь
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
+    npm ci
 
 COPY . .
 RUN npm run build
@@ -108,7 +105,7 @@ docker run --rm myapp cat /run/secrets/npmrc 2>/dev/null || echo "нет!"
 docker swarm init
 
 # Создать секрет
-echo "supersecretpassword" | docker secret create db_password -
+docker secret create db_password ./db_password.txt
 docker secret create ssl_cert ./server.crt
 docker secret create app_config - << EOF
 {
@@ -136,9 +133,13 @@ docker service create \
 docker secret rm db_password
 ```
 
+> [!warning]
+> Не вводи секрет прямо в аргументах команды: он может остаться в shell history
+> или кратковременно быть виден в списке процессов. После создания секрета
+> безопасно удали исходный файл согласно правилам своей системы.
+
 ```yaml
-# docker-compose (Swarm mode)
-version: "3.9"
+# compose.yaml для последующего docker stack deploy
 
 services:
   app:
@@ -156,8 +157,13 @@ secrets:
   db_password:
     external: true        # уже создан через docker secret create
   ssl_cert:
-    file: ./certs/server.crt    # из файла (только для dev!)
+    external: true
 ```
+
+> [!note]
+> Для Swarm файл разворачивается командой `docker stack deploy`, а не обычным
+> `docker compose up`. Обычный Compose тоже поддерживает `secrets`, но локальный
+> secret из `file:` — это файловое монтирование, а не зашифрованное Swarm-хранилище.
 
 ---
 
@@ -166,7 +172,7 @@ secrets:
 Многие официальные образы поддерживают `VAR_FILE`:
 
 ```bash
-# Postgres, MySQL, Redis и другие понимают:
+# Например, официальные образы PostgreSQL и MySQL поддерживают *_FILE:
 docker service create \
   --secret pg_password \
   -e POSTGRES_PASSWORD_FILE=/run/secrets/pg_password \
@@ -201,38 +207,29 @@ CMD ["dotnet", "MyApp.dll"]
 
 ---
 
-## Runtime без Swarm: tmpfs + init-контейнер
+## Runtime без Swarm: secrets в Compose
 
 ```yaml
-version: "3.9"
 services:
-  secrets-init:
-    image: aws-cli
-    command: >
-      sh -c "aws secretsmanager get-secret-value
-             --secret-id prod/myapp/db
-             --query SecretString
-             --output text > /run/secrets/db_config"
-    volumes:
-      - secrets-vol:/run/secrets
-    environment:
-      AWS_REGION: eu-west-1
-
   app:
     image: myapp:latest
-    depends_on:
-      secrets-init:
-        condition: service_completed_successfully
-    volumes:
-      - secrets-vol:/run/secrets:ro
+    secrets:
+      - db_config
 
-volumes:
-  secrets-vol:
-    driver: local
-    driver_opts:
-      type: tmpfs       # только в памяти, не на диске
-      device: tmpfs
+secrets:
+  db_config:
+    file: ./secrets/db_config.json
 ```
+
+Compose предоставит файл контейнеру как `/run/secrets/db_config`. Но в отличие
+от Swarm это **не зашифрованное распределённое хранилище**: исходный файл остаётся
+на хосте. Ограничь права (`chmod 600`), не добавляй каталог в Git и настрой
+ротацию.
+
+Если секрет вообще не должен храниться на диске хоста, приложение или доверенный
+agent должен получать его из Vault/cloud secret manager через workload identity.
+Универсальный «init-контейнер + общий tmpfs» в обычном Compose ненадёжен: tmpfs
+привязан к mount namespace и не предназначен для совместного постоянного тома.
 
 ---
 
@@ -279,11 +276,8 @@ builder.Configuration.AddKeyPerFile(
     optional: true
 );
 
-// Либо через AWS / Azure / Vault провайдеры
-builder.Configuration.AddAWSSecretsManager(
-    region: RegionEndpoint.EUWest1,
-    secretFilter: secret => secret.Name.StartsWith("prod/myapp/")
-);
+// Для AWS / Azure / Vault используй официальный или проверенный provider-пакет.
+// Точный extension method и схема ключей зависят от выбранного пакета.
 ```
 
 ---
@@ -306,7 +300,7 @@ trivy image --scanners secret myapp:latest
 ## Антипаттерны — никогда так не делай
 
 ```dockerfile
-# ❌ Секрет в ARG → виден в docker history
+# ❌ Секрет в ARG/RUN → может попасть в history, provenance, cache или логи
 ARG NPM_TOKEN
 RUN npm install --registry https://npm.pkg.github.com //...authToken=${NPM_TOKEN}
 

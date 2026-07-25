@@ -22,7 +22,9 @@ aliases:
 
 ## docker run — запуск контейнера
 
-docker run автоматически делает pull из docker hub при отсутствии образа в локальном хранилище. Далее создаётся и запускается контейнер.
+`docker run` сначала создаёт, а затем запускает контейнер. Если образа нет
+локально, Docker попытается скачать его из указанного registry (для короткого
+имени вроде `nginx` — обычно из Docker Hub).
 
 ```bash
 docker run [OPTIONS] IMAGE [COMMAND] [ARGS]
@@ -108,7 +110,7 @@ docker unpause my-nginx      # разморозить
 # Удаление
 docker rm my-nginx           # удалить остановленный
 docker rm -f my-nginx        # принудительно (даже запущенный)
-docker rm $(docker ps -aq)   # удалить все остановленные
+docker rm $(docker ps -aq --filter status=exited)  # удалить завершившиеся
 docker container prune       # удалить все остановленные
 ```
 
@@ -139,7 +141,7 @@ docker logs --tail 100 my-nginx        # последние 100 строк
 docker logs --since 2h my-nginx        # за последние 2 часа
 docker logs --since "2024-01-01" my-nginx
 docker logs --timestamps my-nginx      # с временными метками
-docker logs 2>&1 | grep ERROR my-nginx # stderr тоже
+docker logs my-nginx 2>&1 | grep ERROR # искать и в stdout, и в stderr
 ```
 
 ---
@@ -222,8 +224,13 @@ docker commit -m "added config" -a "author" my-nginx custom:latest
 | ---------------- | --------------------------------------------- |
 | `no`             | Не перезапускать (по умолчанию)               |
 | `on-failure[:N]` | При ненулевом exit code, макс N попыток       |
-| `always`         | Всегда, включая после `docker restart` daemon |
+| `always`         | Всегда, в том числе после перезапуска Docker daemon |
 | `unless-stopped` | Всегда, кроме явной остановки пользователем   |
+
+> [!note]
+> Restart policy начинает действовать только после успешного запуска контейнера
+> (Docker использует защиту от бесконечного цикла мгновенных падений). Для
+> production приложение также должно корректно обрабатывать `SIGTERM`.
 
 ---
 

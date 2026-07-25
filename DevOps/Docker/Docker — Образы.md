@@ -24,7 +24,17 @@ aliases:
 
 **Docker Image** — неизменяемый (immutable) шаблон файловой системы и метаданных, состоящий из набора слоёв (layers). Каждый слой содержит изменения относительно предыдущего слоя.
 
-![[excalidraw-docker-image-layers]]
+```mermaid
+flowchart TB
+    Writable["Writable layer контейнера"]
+    App["COPY приложения"]
+    Dependencies["RUN установки зависимостей"]
+    Base["Базовый образ"]
+    Writable --> App --> Dependencies --> Base
+```
+
+При запуске контейнера Docker добавляет поверх read-only слоёв образа отдельный
+writable layer. Он относится к контейнеру, а не изменяет исходный образ.
 
 Слои **переиспользуются** между образами → экономия дискового пространства.
 
@@ -91,7 +101,10 @@ docker build --target builder .           # multi-stage: остановитьс�
 
 # BuildKit (рекомендуется — быстрее, умнее)
 DOCKER_BUILDKIT=1 docker build .
-docker buildx build --platform linux/amd64,linux/arm64 -t myapp:1.0 .
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t registry.example.com/myapp:1.0 \
+  --push .
 ```
 
 > [!info]
@@ -157,7 +170,7 @@ docker load -i myapp.tar
 
 | Реестр | URL | Особенности |
 |--------|-----|-------------|
-| Docker Hub | `docker.io` | Публичный, 1 приватный репозиторий бесплатно |
+| Docker Hub | `docker.io` | Публичные и приватные репозитории; лимиты зависят от текущего тарифа |
 | GitHub CR | `ghcr.io` | Интеграция с GitHub Actions |
 | AWS ECR | `*.ecr.amazonaws.com` | Интеграция с AWS |
 | GCR / GAR | `gcr.io` / `*-docker.pkg.dev` | Google Cloud |
@@ -181,11 +194,11 @@ docker inspect myapp:1.0 | jq '.[0].RootFS'  # слои образа
 ```
 
 > [!tip] Стратегии уменьшения размера
-> 1. Используй `-alpine` или `-slim` базовые образы
+> 1. Используй подходящий минимальный образ (`-slim`, Alpine, chiseled/distroless), предварительно проверив совместимость
 > 2. Multi-stage builds — в финал попадает только runtime
 > 3. Объединяй `RUN` команды и чисти кэш
 > 4. `.dockerignore` — не включай лишнее в контекст
-> 5.  Также существует --squash тэг для объединения слоёв, но лучше оптимизировать Dockerfile.
+> 5. Экспериментальный `--squash` объединяет новые слои сборки, но обычно лучше оптимизировать Dockerfile и multi-stage build.
 
 ---
 

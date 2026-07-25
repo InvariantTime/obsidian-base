@@ -109,12 +109,17 @@ docker run --oom-kill-disable myapp
 docker run --oom-score-adj=-500 myapp
 ```
 
+> [!danger]
+> Не используй `--oom-kill-disable` без жёсткого `--memory`: иначе контейнер может
+> исчерпать память всего хоста. Даже с лимитом приложение может зависнуть вместо
+> корректного завершения.
+
 ```bash
 # Текущее потребление памяти
 PID=$(docker inspect --format '{{.State.Pid}}' myapp)
 CGPATH=$(cat /proc/$PID/cgroup | grep '0::' | cut -d: -f3)
 
-cat /sys/fs/cgroup${CGPATH}/memory.current   # текущий RSS
+cat /sys/fs/cgroup${CGPATH}/memory.current   # память cgroup (не только RSS)
 cat /sys/fs/cgroup${CGPATH}/memory.max       # лимит
 cat /sys/fs/cgroup${CGPATH}/memory.peak      # максимум за время жизни
 cat /sys/fs/cgroup${CGPATH}/memory.events    # oom count!
@@ -139,7 +144,8 @@ dmesg | grep -E "(oom|OOM|killed)" | tail -20
 journalctl -k --since="1 hour ago" | grep -i oom
 
 # Предотвращение: правильно рассчитывать лимиты
-# Для .NET: GC heap + stack + native mem + overhead ≈ * 1.3 от heapSize
+# Для .NET учитывай не только GC heap, но и стеки потоков, JIT, native memory,
+# memory-mapped файлы и служебные структуры runtime.
 ```
 
 ---
@@ -162,7 +168,8 @@ docker top myapp
 ```
 
 > [!tip]
-> Fork bomb: `:(){ :|:& };:` — без `--pids-limit` убьёт весь хост.
+> `--pids-limit` защищает от ошибок и атак, которые бесконтрольно создают процессы
+> или потоки. В Linux threads тоже учитываются контроллером PIDs.
 
 ---
 
@@ -188,6 +195,11 @@ docker run \
 cat /sys/fs/cgroup${CGPATH}/io.stat
 ```
 
+> [!note]
+> Ограничения Block I/O зависят от storage driver, cgroup-версии и реального
+> блочного устройства. Для сетевых файловых систем и некоторых слоистых
+> хранилищ эффект может отличаться от ожидаемого — проверяй нагрузочным тестом.
+
 ---
 
 ## ulimits
@@ -206,8 +218,11 @@ docker run --ulimit core=0 myapp     # отключить core dumps
 
 # Максимальный размер файла
 docker run --ulimit fsize=1073741824 myapp  # 1GB
+```
 
-# Глобальный дефолт в /etc/docker/daemon.json
+Глобальный default в `/etc/docker/daemon.json`:
+
+```json
 {
   "default-ulimits": {
     "nofile": {
@@ -224,13 +239,16 @@ docker run --ulimit fsize=1073741824 myapp  # 1GB
 docker exec myapp sh -c "ulimit -a"
 ```
 
+> [!note]
+> `nproc` ограничивает число процессов для UID, а не строго для контейнера.
+> Основная защита контейнера от массового создания процессов и потоков —
+> `--pids-limit`.
+
 ---
 
 ## Шаблон: ресурсы в docker-compose
 
 ```yaml
-version: "3.9"
-
 services:
   app:
     image: myapp:latest
@@ -240,8 +258,8 @@ services:
           cpus: "1.0"          # жёсткий лимит CPU
           memory: 512M         # жёсткий лимит RAM
         reservations:
-          cpus: "0.25"         # гарантированный минимум CPU
-          memory: 128M         # гарантированный минимум RAM
+          cpus: "0.25"         # запрос/резерв для платформы оркестрации
+          memory: 128M         # не означает физически выделенную RAM в обычном Compose
 
   db:
     image: postgres:16
@@ -264,19 +282,22 @@ services:
 ```
 
 > [!note] deploy.resources в Compose
-> В standalone Compose (не Swarm) секция `deploy.resources` применяется с версии Compose v2.
-> Для standalone docker compose используй:
+> Современный `docker compose` применяет поддерживаемые лимиты из
+> `deploy.resources`, но `reservations` не превращаются в гарантированный минимум
+> ресурсов на локальном Docker Engine. Для явной standalone-конфигурации также
+> доступны сервисные поля:
 > ```yaml
 > mem_limit: 512m
+> mem_reservation: 128m
 > cpus: 1.0
 > ```
+> Если одновременно указаны оба варианта, значения должны быть согласованы.
 
 ---
 
 ## Мониторинг ресурсов: Prometheus + cAdvisor
 
 ```yaml
-version: "3.9"
 services:
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
@@ -318,15 +339,15 @@ scrape_configs:
 # CPU usage по контейнеру (% за 5 минут)
 rate(container_cpu_usage_seconds_total{name!=""}[5m]) * 100
 
-# Memory usage
-container_memory_usage_bytes{name!=""}
+# Рабочий набор памяти (обычно полезнее usage с page cache)
+container_memory_working_set_bytes{name!=""}
 
 # OOM events
 container_oom_events_total
 
-# Throttled CPU (% времени когда был ограничен)
-rate(container_cpu_throttled_seconds_total[5m]) /
-rate(container_cpu_usage_seconds_total[5m]) * 100
+# Доля периодов CFS, в которых контейнер throttled
+rate(container_cpu_cfs_throttled_periods_total{name!=""}[5m]) /
+rate(container_cpu_cfs_periods_total{name!=""}[5m]) * 100
 ```
 
 ---
@@ -334,20 +355,26 @@ rate(container_cpu_usage_seconds_total[5m]) * 100
 ## Расчёт лимитов для .NET приложений
 
 ```bash
-# .NET GC heap = DOTNET_GCHeapHardLimit или ~75% от --memory
-# Примерный расчёт:
-# memory = GC heap + threadpool stacks + native interop + overhead
-# ≈ heapSizeMB * 1.3 + 50MB
+# В контейнере .NET считает cgroup memory limit доступной физической памятью.
+# По умолчанию GC heap hard limit — 75% от этого лимита; остаток нужен не-GC памяти.
 
-# Полезные переменные окружения .NET для контейнеров
-DOTNET_GCHeapHardLimit=402653184        # 384 MB жёсткий лимит heap
-DOTNET_GCConserve=1                      # более агрессивная сборка мусора
-DOTNET_GCHeapHardLimitPercent=75        # 75% от cgroup memory limit
-DOTNET_RUNNING_IN_CONTAINER=true        # .NET сам читает лимиты cgroup!
+# Альтернатива 1: абсолютный лимит
+DOTNET_GCHeapHardLimit=0x18000000       # 384 MiB
 
-# Начиная с .NET 3.0+ — автоматически читает cgroup limits
-# Не нужно вручную задавать GCHeapHardLimit если задан --memory
+# Альтернатива 2: процент от cgroup memory limit
+DOTNET_GCHeapHardLimitPercent=0x4B      # 75% (0x4B = 75)
+
+# Независимая настройка: экономить память ценой производительности
+DOTNET_GCConserve=1                     # экономить память ценой производительности
+
+# Значения HeapHardLimit* в environment задаются в hex.
+# В runtimeconfig.json те же параметры задаются десятичными числами.
 ```
+
+> [!warning]
+> Не задавай одновременно абсолютный `HeapHardLimit` и процент без необходимости:
+> абсолютный лимит имеет приоритет. Обычно достаточно `--memory`; переопределяй GC
+> только после измерений, потому что слишком маленький heap увеличит частоту GC.
 
 ---
 

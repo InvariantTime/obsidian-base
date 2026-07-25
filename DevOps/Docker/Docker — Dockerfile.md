@@ -41,7 +41,10 @@ FROM scratch                 # пустой образ (для Go/C бинарн
 ```
 
 > [!tip] Выбор базового образа
-> Предпочитай `-alpine` или `-slim` варианты — они значительно меньше по размеру.
+> `-slim`, Alpine и минимальные образы действительно меньше, но выбирать их нужно
+> после тестов. Alpine использует `musl` вместо `glibc`, поэтому некоторые
+> нативные библиотеки и готовые бинарники могут не работать. Для новичка
+> `slim`-вариант часто является более предсказуемым компромиссом.
 
 ---
 
@@ -62,22 +65,27 @@ COPY package.json .
 COPY src/ ./src/
 COPY --chown=node:node . .   # сменить владельца
 
-# ADD — то же самое + распаковка архивов + URL
+# ADD — дополнительные возможности поверх COPY
 ADD app.tar.gz /app/         # автоматически распакует
 ADD https://example.com/file.txt /tmp/  # скачает
 ```
 
 > [!warning]
-> Используй `COPY` по умолчанию, `ADD` — только когда нужна распаковка архива.
+> Используй `COPY` по умолчанию. `ADD` автоматически распаковывает только
+> распознаваемые **локальные** tar-архивы; архив, полученный по URL, автоматически
+> не распаковывается. Для сетевых загрузок обычно лучше `RUN curl ...` с
+> проверкой контрольной суммы.
 
 ---
 
 ### `RUN` — выполнение команд при сборке
 
 ```dockerfile
-RUN apt-get update && apt-get install -y    curl     git     && rm -rf /var/lib/apt/lists/*    # чистим кэш в том же слое!
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl git \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 ```
 
 > [!important] Объединяй команды через `&&`
@@ -132,17 +140,25 @@ VOLUME ["/data", "/logs"]
 VOLUME /var/lib/mysql
 ```
 
+> [!note]
+> `VOLUME` не создаёт named volume с заданным именем и не задаёт путь на хосте.
+> При запуске без явного `-v/--mount` Docker создаст anonymous volume. Во многих
+> прикладных образах удобнее описывать mount в Compose или команде запуска.
+
 ---
 
 ### `USER` — пользователь для запуска
 
 ```dockerfile
 RUN groupadd -r appuser && useradd -r -g appuser appuser
-USER appuser        # никогда не запускай контейнер от root!
+USER appuser        # по возможности запускай основной процесс не от root
 ```
 
 >[!info]
->Все инструкции до `USER` будут запускаться от текущего пользователя (по умолчанию root), после `USER` все инструкции запускаются от указанного пользователя
+>`USER` задаёт пользователя для последующих `RUN`, а также для `CMD` и
+>`ENTRYPOINT` при запуске контейнера. Он не влияет на то, кто владеет файлами,
+>добавленными через `COPY`, поэтому при необходимости используй
+>`COPY --chown=appuser:appgroup ...`.
 ---
 
 ### `CMD` и `ENTRYPOINT`
@@ -168,12 +184,18 @@ CMD ["start"]                      # docker run myapp → npm run start
 | Аргументы из `CMD` | — | Используются как аргументы по умолчанию |
 | Рекомендуется для | Дефолтных аргументов | Основного процесса контейнера |
 
+> [!note] Exec-форма и сигналы
+> Exec-форма (`["команда", "аргумент"]`) запускает процесс напрямую. В shell-форме
+> Docker запускает `/bin/sh -c ...`, из-за чего сигналы остановки могут не дойти
+> до приложения. Также JSON-форма не подставляет переменные оболочки автоматически.
+
 ---
 
 ### `HEALTHCHECK` — проверка состояния
 
 ```dockerfile
-HEALTHCHECK --interval=30s --timeout=10s --retries=3   CMD curl -f http://localhost:3000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
 
 HEALTHCHECK NONE   # отключить healthcheck из базового образа
 ```
@@ -197,6 +219,10 @@ ONBUILD COPY . /app
 ONBUILD RUN npm ci
 ```
 
+`ONBUILD` сохраняет отложенную инструкцию в образе, и она выполнится при сборке
+дочернего Dockerfile с `FROM` этого образа. Используй осторожно: скрытые шаги
+усложняют понимание и отладку сборки.
+
 ---
 
 ## Многоэтапная сборка (Multi-stage build)
@@ -211,6 +237,7 @@ COPY package*.json ./
 RUN npm ci
 COPY . .
 RUN npm run build      # компиляция TypeScript → JS
+RUN npm prune --omit=dev
 
 # ── Этап 2: финальный образ ──────────────────────
 FROM node:20-alpine AS production
@@ -219,7 +246,7 @@ WORKDIR /app
 # Копируем ТОЛЬКО нужное из этапа сборки
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
-COPY package.json .
+COPY --from=builder /app/package.json ./
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
@@ -230,6 +257,7 @@ CMD ["node", "dist/index.js"]
 
 > [!success] Результат
 > Финальный образ не содержит исходников, devDependencies и инструментов сборки.
+> Команда `npm prune --omit=dev` перед копированием удаляет devDependencies.
 
 ---
 
@@ -246,9 +274,15 @@ RUN dotnet publish -c Release -o /app/publish
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
+USER app
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "MyApp.dll"]
 ```
+
+> [!note]
+> В официальных Linux-образах .NET 8+ уже есть непривилегированный пользователь
+> `app`. Если приложение должно записывать файлы, заранее выдай этому пользователю
+> права только на нужные каталоги или подключи том.
 
 ---
 
@@ -272,7 +306,7 @@ coverage/
 
 > [!tip] Чеклист хорошего Dockerfile
 
-- [ ] Используй конкретный тег образа (`node:20-alpine`, не `node:latest`)
+- [ ] Используй конкретный тег образа (`node:20-alpine`, не `node:latest`); для строгой воспроизводимости закрепляй digest
 - [ ] Сначала копируй `package.json` → `RUN npm ci` → потом исходники (кэширование слоёв!)
 - [ ] Объединяй `RUN` команды и чисти кэш пакетного менеджера в том же слое
 - [ ] Никогда не запускай от `root` — создай отдельного пользователя

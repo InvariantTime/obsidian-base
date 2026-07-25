@@ -39,11 +39,9 @@ docker compose down      # остановить и удалить
 `docker volume create`
 мы описываем приложение в одном `compose.yaml` и запускаем его одной командой:
 `docker compose up`
-## Структура docker-compose.yml
+## Структура `compose.yaml`
 
 ```yaml
-version: "3.9"              # версия спецификации Compose
-
 services:                   # контейнеры
   web:
     ...
@@ -58,13 +56,13 @@ networks:                   # сети
 ```
 
 >[!info]  
->Поле `version` сохранено для обратной совместимости, но современный Docker Compose автоматически использует актуальную версию Compose Specification.
+>Поле верхнего уровня `version` устарело и в новых файлах не требуется. Современный
+>Docker Compose всегда использует актуальную Compose Specification; если указать
+>`version`, Compose может показать предупреждение.
 
 ## Полный пример: веб-приложение
 
 ```yaml
-version: "3.9"
-
 services:
 
   # ── Nginx (реверс-прокси) ───────────────────────────────────
@@ -98,8 +96,8 @@ services:
       - REDIS_URL=redis://redis:6379
     env_file:
       - .env.production
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"              # доступен другим сервисам сети, но не публикуется на хост
     volumes:
       - uploads:/app/uploads
     depends_on:
@@ -108,7 +106,11 @@ services:
       redis:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
       interval: 30s
       timeout: 10s
       retries: 3
@@ -145,7 +147,7 @@ services:
   # ── Redis ────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes --requirepass mypassword
+    command: redis-server --appendonly yes
     volumes:
       - redis-data:/data
     networks:
@@ -165,6 +167,10 @@ networks:
     internal: true           # без доступа в интернет
 ```
 
+> [!warning]
+> Пароли в этом примере упрощены для обучения. Не коммить реальные значения в
+> Compose-файл или `.env`; для production используй [[Docker — Секреты]].
+
 ---
 
 ## Команды Docker Compose
@@ -174,7 +180,7 @@ networks:
 docker compose up                     # запустить (foreground)
 docker compose up -d                  # detached (фон)
 docker compose up --build             # пересобрать образы перед запуском
-docker compose up app db              # только конкретные сервисы
+docker compose up app db              # выбранные сервисы и их зависимости
 docker compose up --scale app=3      # масштабировать сервис
 
 # ── Остановка ──────────────────────────────────────────────────
@@ -192,7 +198,10 @@ docker compose logs --tail 100 app
 
 # ── Управление ─────────────────────────────────────────────────
 docker compose restart app            # перезапустить сервис
-docker compose start / stop / pause / unpause
+docker compose start app
+docker compose stop app
+docker compose pause app
+docker compose unpause app
 
 # ── Выполнение команд ──────────────────────────────────────────
 docker compose exec app bash          # exec в работающем контейнере
@@ -213,6 +222,12 @@ docker compose top                    # процессы в контейнера
 docker compose pull                   # скачать образы без запуска
 ```
 
+> [!note]
+> При масштабировании нельзя привязать один и тот же фиксированный порт хоста ко
+> всем репликам. В примере наружу публикуется только Nginx, а реплики `app`
+> доступны ему через сеть Compose. `docker compose run` по умолчанию не публикует
+> порты сервиса; при необходимости добавь `--service-ports`.
+
 ---
 
 ## Переменные и конфигурация
@@ -225,6 +240,12 @@ POSTGRES_VERSION=16
 APP_PORT=3000
 NODE_ENV=production
 ```
+
+> [!important] Два разных механизма
+> `.env` и `--env-file` прежде всего задают значения для подстановки
+> `${VARIABLE}` в Compose-файл. Чтобы переменная попала **в контейнер**, укажи её
+> в `environment` или `env_file` конкретного сервиса. Проверить результат можно
+> командой `docker compose config`.
 
 ```yaml
 services:
@@ -246,20 +267,19 @@ docker compose --env-file .env.staging up -d
 ## Переопределение конфигурации
 
 ```bash
-# docker-compose.yml       — базовая конфигурация
-# docker-compose.override.yml — автоматически мержится при up
+# compose.yaml          — базовая конфигурация
+# compose.override.yaml — автоматически объединяется с базовой при up
 
 # Production
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f compose.yaml -f compose.prod.yaml up -d
 
 # Staging
-docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+docker compose -f compose.yaml -f compose.staging.yaml up -d
 ```
 
-**docker-compose.override.yml** (для dev — монтирует исходники):
+**compose.override.yaml** (для dev — монтирует исходники):
 
 ```yaml
-version: "3.9"
 services:
   app:
     build:
@@ -298,11 +318,11 @@ services:
 ```
 
 > [!warning]
-> `depends_on` управляет только порядком запуска сервисов.
->
-> Он **не гарантирует**, что приложение внутри контейнера уже готово принимать соединения.
->
-> Для этого используется `healthcheck` и `condition: service_healthy`.
+> Короткая форма `depends_on: [db]` гарантирует порядок запуска, но не готовность
+> приложения внутри контейнера. Длинная форма с
+> `condition: service_healthy` ждёт успешного `healthcheck`, а
+> `service_completed_successfully` — успешного завершения одноразового сервиса.
+> Само приложение всё равно должно повторять временно неудавшиеся подключения.
 ---
 
 ## Profiles — группы сервисов
@@ -327,7 +347,8 @@ services:
 
 ```bash
 docker compose --profile tools up -d         # поднять + adminer
-docker compose --profile testing run tests   # запустить тесты
+docker compose --profile testing up tests    # включить профиль testing
+docker compose run --rm tests                # явный запуск сервиса возможен и без профиля
 ```
 
 ---
@@ -344,6 +365,11 @@ healthcheck:
   start_period: 40s   # grace period после запуска
   disable: false      # true — отключить
 ```
+
+> [!note]
+> Команда проверки выполняется **внутри** контейнера. Утилита `curl` должна
+> присутствовать в образе; в минимальных образах вместо неё используй имеющийся
+> инструмент или собственную команду приложения.
 
 ---
 
