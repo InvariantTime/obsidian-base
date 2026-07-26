@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "DevOps/Linux/14 — Планирование задач.md",
+                "file": "DevOps/Linux/01 — Ориентация в Linux.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "14 — Планирование задач"
+              "title": "01 — Ориентация в Linux"
             }
           }
         ]
@@ -208,23 +208,24 @@
   },
   "active": "491bf9263dfa8248",
   "lastOpenFiles": [
+    "DevOps/Linux/Linux MOC.md",
+    "DevOps/Linux/03 — Файловая система.md",
+    "DevOps/Linux/16 — Глоссарий Linux.md",
+    "DevOps/Linux/01 — Ориентация в Linux.md",
+    "DevOps/Linux/04 — Пользователи и права.md",
     "DevOps/Linux/13 — Загрузка Linux и ядро.md",
     "DevOps/Linux/12 — Память и ресурсы.md",
     "DevOps/Linux/11 — Окружение и конфигурация shell.md",
-    "DevOps/Linux/10 — Работа с текстом и архивами.md",
     "DevOps/Linux/09 — Bash подробнее.md",
+    "DevOps/Linux/05 — Процессы и сигналы.md",
+    "DevOps/Linux/14 — Планирование задач.md",
+    "DevOps/Linux/10 — Работа с текстом и архивами.md",
     "DevOps/Linux/08 — Сеть, диски и практика.md",
     "DevOps/Linux/07 — Пакеты и обновления.md",
     "DevOps/Linux/06 — Сервисы и журналы.md",
-    "DevOps/Linux/05 — Процессы и сигналы.md",
-    "DevOps/Linux/04 — Пользователи и права.md",
-    "DevOps/Linux/03 — Файловая система.md",
     "DevOps/Linux/02 — Терминал и базовые команды.md",
-    "DevOps/Linux/01 — Ориентация в Linux.md",
     "Excalidraw/docker/excalidraw-docker-network-base.md",
-    "DevOps/Linux/Linux MOC.md",
     "DevOps/Linux/15 — Диагностика и лабораторные работы.md",
-    "DevOps/Linux/14 — Планирование задач.md",
     "DevOps/Docker/Docker — Dockerfile.md",
     "DevOps/Docker/Docker — Пользователи и права.md",
     "DevOps/Docker/Docker — BuildKit и кэширование.md",
@@ -233,7 +234,6 @@
     "DevOps/Docker/Docker — Образы.md",
     "DevOps/Docker/Docker — Основы.md",
     "DevOps/Docker/Docker MOC.md",
-    "DevOps/Docker/Docker — Анализ образов.md",
     "DevOps/Docker",
     "Excalidraw/docker",
     "Excalidraw",
